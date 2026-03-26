@@ -10,10 +10,15 @@ const SettingsPage = () => {
   const [showModal, setShowModal] = useState(false);
   const [sessionCoins, setSessionCoins] = useState(0);
 
-  // 1. Open Modal
+  const startedWithZero = useRef(false);
+
+  // Helper to calculate minutes from session coins
+  const totalPendingMinutes = sessionCoins * 2;
+
   const openInsertCoin = async () => {
     try {
       await fetch(`http://${espIp}/toggle?state=true`);
+      startedWithZero.current = activeTimeSeconds === 0;
       setSessionCoins(0);
       setIsSystemActive(true);
       setWindowCountdown(15);
@@ -23,57 +28,46 @@ const SettingsPage = () => {
     }
   };
 
-  // 2. CONNECT: Convert session coins to ACTIVE TIME
-  const handleConnect = async () => {
+  const closeInsertCoin = async () => {
     try {
       await fetch(`http://${espIp}/toggle?state=false`);
-      if (sessionCoins > 0) {
-        setActiveTimeSeconds(prev => prev + (sessionCoins * 120));
-        console.log(`🚀 Connected: Added ${sessionCoins * 2} minutes.`);
+      
+      if (startedWithZero.current && sessionCoins > 0) {
+        // Convert session coins to seconds (1 coin = 120 seconds)
+        setActiveTimeSeconds(sessionCoins * 120);
       }
-      exitModal();
-    } catch (err) { console.error("Error connecting"); }
+
+      setIsSystemActive(false);
+      setWindowCountdown(0);
+      setShowModal(false);
+      setSessionCoins(0);
+    } catch (err) {
+      console.error("Lock error:", err);
+    }
   };
 
-  // 3. CLOSE: Convert session coins to BANK BALANCE
-  const handleClose = async () => {
-    try {
-      await fetch(`http://${espIp}/toggle?state=false`);
-      if (sessionCoins > 0) {
-        setPesosBalance(prev => prev + sessionCoins);
-        console.log(`💰 Closed: Added ₱${sessionCoins.toFixed(2)} to bank.`);
-      }
-      exitModal();
-    } catch (err) { console.error("Error closing"); }
-  };
-
-  const exitModal = () => {
-    setIsSystemActive(false);
-    setWindowCountdown(0);
-    setShowModal(false);
-    setSessionCoins(0);
-  };
-
-  // 4. Modal Timeout Logic (Defaults to CLOSE/BANK if time runs out)
   useEffect(() => {
     let timer = null;
     if (showModal && windowCountdown > 0) {
       timer = setInterval(() => setWindowCountdown(prev => prev - 1), 1000);
     } else if (showModal && windowCountdown === 0) {
-      handleClose(); // Auto-save to bank if user is idle
+      closeInsertCoin();
     }
     return () => clearInterval(timer);
   }, [windowCountdown, showModal]);
 
-  // 5. Polling ESP32 for RFID
   useEffect(() => {
     const checkEsp32 = async () => {
       if (!isSystemActive) return;
       try {
         const response = await fetch(`http://${espIp}/status`);
         const data = await response.json();
+
         if (data.newScan) {
           setSessionCoins(prev => prev + 1);
+          if (!startedWithZero.current) {
+            setPesosBalance(prev => prev + 1);
+          }
           setWindowCountdown(15); 
         }
       } catch (err) { }
@@ -82,7 +76,6 @@ const SettingsPage = () => {
     return () => clearInterval(interval);
   }, [isSystemActive, espIp]);
 
-  // 6. Main Clock
   useEffect(() => {
     let timer = null;
     if (!isPaused && activeTimeSeconds > 0) {
@@ -106,7 +99,7 @@ const SettingsPage = () => {
     <div style={styles.container}>
       <div style={styles.panel}>
         <div style={styles.header}>
-          <div style={styles.label}>Pisonet-X</div>
+          <div style={styles.label}>Pisulit</div>
           <div style={styles.balanceBadge}>Bank: ₱ {pesosBalance.toFixed(2)}</div>
         </div>
 
@@ -145,9 +138,14 @@ const SettingsPage = () => {
             
             <div style={styles.sessionCounter}>
               <div style={{fontSize: '1.8rem', fontWeight: 'bold'}}>🪙 x {sessionCoins}</div>
-              <div style={styles.previewBox}>
-                <p style={{color: '#38bdf8', margin: '2px 0'}}>Time: +{sessionCoins * 2} mins</p>
-                <p style={{color: '#10b981', margin: '2px 0'}}>Bank: +₱{sessionCoins.toFixed(2)}</p>
+              
+              {/* --- NEW CONVERSION DISPLAY --- */}
+              <div style={styles.conversionText}>
+                {startedWithZero.current ? (
+                  <span style={{color: '#38bdf8'}}>+ {totalPendingMinutes} Minutes Time</span>
+                ) : (
+                  <span style={{color: '#10b981'}}>+ ₱ {sessionCoins.toFixed(2)} Bank</span>
+                )}
               </div>
             </div>
 
@@ -159,11 +157,8 @@ const SettingsPage = () => {
               }}></div>
             </div>
             
-            <div style={styles.modalActions}>
-              <button onClick={handleConnect} style={{...styles.actionBtn, backgroundColor: '#3b82f6'}}>Connect</button>
-              <button onClick={handleClose} style={{...styles.actionBtn, backgroundColor: '#ef4444'}}>Close</button>
-            </div>
-            <p style={{fontSize: '0.8rem', marginTop: '15px'}}>Window: {windowCountdown}s</p>
+            <p style={{fontSize: '0.9rem'}}>Window: <b>{windowCountdown}s</b></p>
+            <button onClick={closeInsertCoin} style={styles.closeBtn}>Done</button>
           </div>
         </div>
       )}
@@ -182,13 +177,12 @@ const styles = {
   buttonGrid: { display: 'flex', flexDirection: 'column', gap: '12px' },
   btn: { padding: '16px', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' },
   modalOverlay: { position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.9)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100 },
-  modal: { backgroundColor: '#1e293b', padding: '35px', borderRadius: '30px', width: '300px', textAlign: 'center', border: '1px solid #38bdf8' },
+  modal: { backgroundColor: '#1e293b', padding: '40px', borderRadius: '30px', width: '300px', textAlign: 'center', border: '1px solid #38bdf8' },
   sessionCounter: { backgroundColor: '#0f172a', padding: '20px', borderRadius: '20px', marginBottom: '20px' },
-  previewBox: { marginTop: '10px', fontSize: '0.9rem', borderTop: '1px solid #334155', paddingTop: '10px' },
-  progressContainer: { width: '100%', height: '10px', backgroundColor: '#334155', borderRadius: '5px', margin: '15px 0', overflow: 'hidden' },
+  conversionText: { marginTop: '10px', fontSize: '1rem', fontWeight: 'bold' },
+  progressContainer: { width: '100%', height: '12px', backgroundColor: '#334155', borderRadius: '6px', margin: '20px 0', overflow: 'hidden' },
   progressBar: { height: '100%', backgroundColor: '#10b981' },
-  modalActions: { display: 'flex', gap: '10px', justifyContent: 'center' },
-  actionBtn: { flex: 1, padding: '12px', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }
+  closeBtn: { marginTop: '10px', padding: '12px 25px', backgroundColor: '#ef4444', border: 'none', color: 'white', borderRadius: '10px', fontWeight: 'bold' }
 };
 
 export default SettingsPage;
